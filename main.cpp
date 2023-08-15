@@ -23,12 +23,15 @@ private:
     VkInstance m_instance{VK_NULL_HANDLE};
     VkDebugUtilsMessengerEXT m_debugMessenger{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
+    VkDevice m_device{VK_NULL_HANDLE};
+    VkQueue m_graphicsQueue{VK_NULL_HANDLE};
 
     void InitWindow();
     void InitVulkan();
     void SetUpDebugMessenger();
     void CreateInstance();
     void PickPhysicalDevice();
+    void CreateLogicalDevice();
     void MainLoop();
     void Cleanup();
 
@@ -123,6 +126,7 @@ void TriangleApp::InitVulkan()
     CreateInstance();
     SetUpDebugMessenger();
     PickPhysicalDevice();
+    CreateLogicalDevice();
 
 }
 
@@ -260,6 +264,48 @@ void TriangleApp::PickPhysicalDevice()
     }
 }
 
+void TriangleApp::CreateLogicalDevice()
+{
+    QueueFamilyIndices indices = FindQueueFamilies(m_physicalDevice);
+
+    VkDeviceQueueCreateInfo queueCreateInfo{};
+    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+    queueCreateInfo.queueCount = 1;
+
+    float queuePriority = 1.0f;
+    queueCreateInfo.pQueuePriorities = &queuePriority;
+    
+    VkPhysicalDeviceFeatures deviceFeatures{};
+
+    VkDeviceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.pQueueCreateInfos = &queueCreateInfo;
+    createInfo.queueCreateInfoCount = 1;
+    createInfo.pEnabledFeatures = &deviceFeatures;
+    createInfo.enabledExtensionCount = 0;
+
+    if (s_enableValidationLayers)
+    {
+        createInfo.enabledLayerCount = static_cast<uint32_t>
+                                        (s_validationLayers.size());
+        createInfo.ppEnabledLayerNames = s_validationLayers.data();
+    }
+    else
+    {
+        createInfo.enabledLayerCount = 0;
+    }
+
+    if (VK_SUCCESS != vkCreateDevice(m_physicalDevice, &createInfo, 
+                                    nullptr, &m_device))
+    {
+        throw std::runtime_error("failed to create logical device");
+    }
+
+    vkGetDeviceQueue(m_device, indices.graphicsFamily.value(), 
+                        0, &m_graphicsQueue);
+}
+
 void TriangleApp::MainLoop()
 {
     while (!glfwWindowShouldClose(m_window))
@@ -270,6 +316,8 @@ void TriangleApp::MainLoop()
 
 void TriangleApp::Cleanup()
 {
+    vkDestroyDevice(m_device, nullptr);
+    
     if (s_enableValidationLayers)
     {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
