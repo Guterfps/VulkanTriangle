@@ -11,6 +11,7 @@
 #include <algorithm> // std::find
 #include <cstring> // strcmp
 #include <map> // std::map
+#include <set> // std::set
 #include <optional> // std::optional
 
 class TriangleApp
@@ -22,13 +23,16 @@ private:
     GLFWwindow *m_window{nullptr};
     VkInstance m_instance{VK_NULL_HANDLE};
     VkDebugUtilsMessengerEXT m_debugMessenger{VK_NULL_HANDLE};
+    VkSurfaceKHR m_surface{VK_NULL_HANDLE};
     VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
     VkDevice m_device{VK_NULL_HANDLE};
     VkQueue m_graphicsQueue{VK_NULL_HANDLE};
+    VkQueue m_presentQueue{VK_NULL_HANDLE};
 
     void InitWindow();
     void InitVulkan();
     void SetUpDebugMessenger();
+    void CreateSurface();
     void CreateInstance();
     void PickPhysicalDevice();
     void CreateLogicalDevice();
@@ -48,11 +52,11 @@ private:
         void *pUserData);
     static void PopulateDebugMessengerCreateInfo(
                 VkDebugUtilsMessengerCreateInfoEXT& createInfo);
-    static bool IsDeviceSuitable(VkPhysicalDevice device);
-    static int RateDevice(VkPhysicalDevice device);
+    bool IsDeviceSuitable(VkPhysicalDevice device);
+    int RateDevice(VkPhysicalDevice device);
     
     struct QueueFamilyIndices;
-    static QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
+    QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
 
     static constexpr uint32_t WIDTH = 800;
     static constexpr uint32_t HEIGHT = 600;
@@ -65,11 +69,13 @@ private:
 
     struct QueueFamilyIndices
     {
-        std::optional<uint32_t>  graphicsFamily;
+        std::optional<uint32_t>  m_graphicsFamily;
+        std::optional<uint32_t>  m_presentFamily;
 
         bool IsComplete()
         {
-            return (graphicsFamily.has_value());
+            return (m_graphicsFamily.has_value() &&
+                    m_presentFamily.has_value());
         }
     };
 };
@@ -125,6 +131,7 @@ void TriangleApp::InitVulkan()
 {
     CreateInstance();
     SetUpDebugMessenger();
+    CreateSurface();
     PickPhysicalDevice();
     CreateLogicalDevice();
 
@@ -200,6 +207,15 @@ void TriangleApp::CreateInstance()
 
 }
 
+void TriangleApp::CreateSurface()
+{
+    if (VK_SUCCESS != glfwCreateWindowSurface(m_instance, m_window, 
+                                                nullptr, &m_surface))
+    {
+        throw std::runtime_error("failed to create window surface");
+    }
+}
+
 bool TriangleApp::CheckExstensions(const char **glfwExtensions, 
                                     uint32_t glfwExtensionCount)
 {
@@ -268,20 +284,28 @@ void TriangleApp::CreateLogicalDevice()
 {
     QueueFamilyIndices indices = FindQueueFamilies(m_physicalDevice);
 
-    VkDeviceQueueCreateInfo queueCreateInfo{};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
-    queueCreateInfo.queueCount = 1;
-
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    std::set<uint32_t> uniqueQueueFamilies = 
+    {indices.m_graphicsFamily.value(), indices.m_presentFamily.value()};
     float queuePriority = 1.0f;
-    queueCreateInfo.pQueuePriorities = &queuePriority;
+
+    for (uint32_t queueFamily : uniqueQueueFamilies)
+    {
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = queueFamily;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(queueCreateInfo);
+    }
     
     VkPhysicalDeviceFeatures deviceFeatures{};
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pQueueCreateInfos = &queueCreateInfo;
-    createInfo.queueCreateInfoCount = 1;
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>
+                                        (queueCreateInfos.size());
+    createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &deviceFeatures;
     createInfo.enabledExtensionCount = 0;
 
@@ -302,8 +326,10 @@ void TriangleApp::CreateLogicalDevice()
         throw std::runtime_error("failed to create logical device");
     }
 
-    vkGetDeviceQueue(m_device, indices.graphicsFamily.value(), 
+    vkGetDeviceQueue(m_device, indices.m_graphicsFamily.value(), 
                         0, &m_graphicsQueue);
+    vkGetDeviceQueue(m_device, indices.m_presentFamily.value(), 
+                        0, &m_presentQueue);
 }
 
 void TriangleApp::MainLoop()
@@ -323,6 +349,7 @@ void TriangleApp::Cleanup()
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
 
+    vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
     vkDestroyInstance(m_instance, nullptr);
     
     glfwDestroyWindow(m_window);
@@ -366,16 +393,6 @@ GetRequiredExtensions(const char **glfwExtensions, uint32_t glfwExtensionCount)
     return extensions;
 }
 
-VKAPI_ATTR VkBool32 VKAPI_CALL TriangleApp::DebugCallback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-        VkDebugUtilsMessageTypeFlagsEXT messageType,
-        const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
-        void *pUserData)
-{
-    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
-
-    return VK_FALSE;
-}
 
 void TriangleApp::PopulateDebugMessengerCreateInfo(
                     VkDebugUtilsMessengerCreateInfoEXT& createInfo)
@@ -421,6 +438,12 @@ int TriangleApp::RateDevice(VkPhysicalDevice device)
     {
         return 0;
     }
+    
+    QueueFamilyIndices indices = FindQueueFamilies(device);
+    if (indices.m_graphicsFamily.value() == indices.m_presentFamily.value())
+    {
+        score += 100;
+    }
 
     return score;
 }
@@ -438,11 +461,29 @@ TriangleApp::FindQueueFamilies(VkPhysicalDevice device)
     {
         if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
         {
-            indices.graphicsFamily = i;
+            indices.m_graphicsFamily = i;
+        }
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, 
+                                            m_surface, &presentSupport);
+        if (presentSupport)
+        {
+            indices.m_presentFamily = i;
         }
     }
 
     return indices;    
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL TriangleApp::DebugCallback(
+        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        VkDebugUtilsMessageTypeFlagsEXT messageType,
+        const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+        void *pUserData)
+{
+    std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+
+    return VK_FALSE;
 }
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, 
