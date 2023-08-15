@@ -10,6 +10,8 @@
 #include <vector> // std::vector
 #include <algorithm> // std::find
 #include <cstring> // strcmp
+#include <map> // std::map
+#include <optional> // std::optional
 
 class TriangleApp
 {
@@ -18,13 +20,15 @@ public:
 
 private:
     GLFWwindow *m_window{nullptr};
-    VkInstance m_instance;
-    VkDebugUtilsMessengerEXT m_debugMessenger;
+    VkInstance m_instance{VK_NULL_HANDLE};
+    VkDebugUtilsMessengerEXT m_debugMessenger{VK_NULL_HANDLE};
+    VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
 
     void InitWindow();
     void InitVulkan();
     void SetUpDebugMessenger();
     void CreateInstance();
+    void PickPhysicalDevice();
     void MainLoop();
     void Cleanup();
 
@@ -41,6 +45,11 @@ private:
         void *pUserData);
     static void PopulateDebugMessengerCreateInfo(
                 VkDebugUtilsMessengerCreateInfoEXT& createInfo);
+    static bool IsDeviceSuitable(VkPhysicalDevice device);
+    static int RateDevice(VkPhysicalDevice device);
+    
+    struct QueueFamilyIndices;
+    static QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
 
     static constexpr uint32_t WIDTH = 800;
     static constexpr uint32_t HEIGHT = 600;
@@ -50,6 +59,16 @@ private:
     #else
         static constexpr bool s_enableValidationLayers = true;
     #endif
+
+    struct QueueFamilyIndices
+    {
+        std::optional<uint32_t>  graphicsFamily;
+
+        bool IsComplete()
+        {
+            return (graphicsFamily.has_value());
+        }
+    };
 };
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, 
@@ -103,6 +122,7 @@ void TriangleApp::InitVulkan()
 {
     CreateInstance();
     SetUpDebugMessenger();
+    PickPhysicalDevice();
 
 }
 
@@ -210,6 +230,36 @@ bool TriangleApp::CheckExstensions(const char **glfwExtensions,
     return true;
 }
 
+void TriangleApp::PickPhysicalDevice()
+{
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
+    if (0 == deviceCount)
+    {
+        throw std::runtime_error("failed to find GPUs with Vulkan support");
+    }
+
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
+
+    std::multimap<int, VkPhysicalDevice> deviceMap;
+
+    for (const auto& device : devices)
+    {
+        int score = RateDevice(device);
+        deviceMap.emplace(score, device);
+    }
+
+    if (deviceMap.rbegin()->first > 0)
+    {
+        m_physicalDevice = deviceMap.rbegin()->second;
+    }
+    else
+    {
+        throw std::runtime_error("failed to find a suitable GPU");
+    }
+}
+
 void TriangleApp::MainLoop()
 {
     while (!glfwWindowShouldClose(m_window))
@@ -294,6 +344,57 @@ void TriangleApp::PopulateDebugMessengerCreateInfo(
                             VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     createInfo.pfnUserCallback = &DebugCallback;
     createInfo.pUserData = nullptr;
+}
+
+bool TriangleApp::IsDeviceSuitable(VkPhysicalDevice device)
+{
+    QueueFamilyIndices indices = FindQueueFamilies(device);
+    
+    return (indices.IsComplete());
+}
+
+int TriangleApp::RateDevice(VkPhysicalDevice device)
+{
+    VkPhysicalDeviceProperties deviceProperties;
+    vkGetPhysicalDeviceProperties(device, &deviceProperties);
+    VkPhysicalDeviceFeatures deviceFeatures;
+    vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+    int score = 0;
+
+    if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+    {
+        score += 1000;
+    }
+
+    score += deviceProperties.limits.maxImageDimension2D;
+
+    if ((deviceFeatures.geometryShader == VK_FALSE) || 
+        (false == IsDeviceSuitable(device)))
+    {
+        return 0;
+    }
+
+    return score;
+}
+
+TriangleApp::QueueFamilyIndices 
+TriangleApp::FindQueueFamilies(VkPhysicalDevice device)
+{
+    QueueFamilyIndices indices;
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, 
+                                            queueFamilies.data());
+    for (uint32_t i = 0; (i < queueFamilyCount) && !indices.IsComplete(); ++i)
+    {
+        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            indices.graphicsFamily = i;
+        }
+    }
+
+    return indices;    
 }
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, 
