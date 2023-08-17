@@ -15,6 +15,7 @@
 #include <optional> // std::optional
 #include <limits> // std::numeric_limits
 #include <algorithm> // std::clamp
+#include <fstream> // std::ifstream
 
 class TriangleApp
 {
@@ -45,6 +46,7 @@ private:
     void CreateLogicalDevice();
     void CreateSwapChain();
     void CreateImageViews();
+    void CreateGraphicsPipeline();
     void MainLoop();
     void Cleanup();
 
@@ -74,6 +76,8 @@ private:
     static VkPresentModeKHR ChooseSwapPresentMode
     (const std::vector<VkPresentModeKHR>& availablePresentModes);
     VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
+    static std::vector<char> ReadFile(const std::string& filename);
+    VkShaderModule CreateShaderModule(const std::vector<char>& code);
 
 
     static constexpr uint32_t WIDTH = 800;
@@ -165,6 +169,7 @@ void TriangleApp::InitVulkan()
     CreateLogicalDevice();
     CreateSwapChain();
     CreateImageViews();
+    CreateGraphicsPipeline();
 
 }
 
@@ -456,6 +461,35 @@ void TriangleApp::CreateImageViews()
     }
 }
 
+void TriangleApp::CreateGraphicsPipeline()
+{
+    auto vertShaderCode = ReadFile("shaders/vert.spv");
+    auto fragShaderCode = ReadFile("shaders/frag.spv");
+
+    VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
+    VkShaderModule fragShaderModule = CreateShaderModule(fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertStageInfo{};
+    vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertStageInfo.module = vertShaderModule;
+    vertStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragStageInfo{};
+    vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    vertStageInfo.module = fragShaderModule;
+    vertStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = 
+    {vertStageInfo, fragStageInfo};
+
+    
+
+    vkDestroyShaderModule(m_device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(m_device, vertShaderModule, nullptr);
+}
+
 void TriangleApp::MainLoop()
 {
     while (!glfwWindowShouldClose(m_window))
@@ -711,6 +745,41 @@ inline VkExtent2D TriangleApp::ChooseSwapExtent
 
         return actualExtent;
     }
+}
+
+inline std::vector<char> TriangleApp::ReadFile(const std::string& filename)
+{
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+    if (!file.is_open())
+    {
+        throw std::runtime_error("failed to open file");
+    }
+
+    std::size_t fileSize = static_cast<std::size_t>(file.tellg());
+    std::vector<char> buffer(fileSize);
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+    file.close();
+
+    return buffer;
+}
+
+inline VkShaderModule TriangleApp::CreateShaderModule(const std::vector<char>& code)
+{
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = code.size();
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+    VkShaderModule shaderModule;
+    if (VK_SUCCESS != vkCreateShaderModule(m_device, &createInfo, 
+                                            nullptr, &shaderModule))
+    {
+        throw std::runtime_error("failed to create shader module");
+    }
+
+    return shaderModule;
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL TriangleApp::DebugCallback(
