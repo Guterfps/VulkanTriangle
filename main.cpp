@@ -3,6 +3,7 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp> // linear algebra
 
 #include <iostream> // for errors
 #include <stdexcept> // std::exception
@@ -16,6 +17,7 @@
 #include <limits> // std::numeric_limits
 #include <algorithm> // std::clamp
 #include <fstream> // std::ifstream
+#include <array> // std::array
 
 class TriangleApp
 {
@@ -47,6 +49,11 @@ private:
     std::vector<VkFence> m_inFlightFences;
     bool m_framebufferResized{false};
     uint32_t m_currentFrame{0};
+    
+    struct Vertex;
+    const std::vector<Vertex> m_vertices{{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+                                        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+                                        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}};
 
     void InitWindow();
     void InitVulkan();
@@ -131,6 +138,16 @@ private:
         VkSurfaceCapabilitiesKHR m_capabilities;
         std::vector<VkSurfaceFormatKHR> m_formats;
         std::vector<VkPresentModeKHR> m_presentModes;
+    };
+
+    struct Vertex
+    {
+        glm::vec2 m_pos;
+        glm::vec3 m_color;
+
+        static VkVertexInputBindingDescription GetBindingDescription();
+        static std::array<VkVertexInputAttributeDescription, 2> 
+                GetAttributeDescriptions();
     };
 };
 
@@ -595,12 +612,16 @@ void TriangleApp::CreateGraphicsPipeline()
     VkPipelineShaderStageCreateInfo shaderStages[] = 
     {vertStageInfo, fragStageInfo};
 
+    auto bindingDescription = Vertex::GetBindingDescription();
+    auto attributeDescriptions = Vertex::GetAttributeDescriptions();
+
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = nullptr;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = 
+    static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1225,6 +1246,32 @@ void TriangleApp::FramebufferResizeCallback(GLFWwindow* window,
     app->m_framebufferResized = true;
     (void)width;
     (void)height;
+}
+
+inline VkVertexInputBindingDescription TriangleApp::Vertex::GetBindingDescription()
+{
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(Vertex);
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    return bindingDescription;
+}
+
+inline std::array<VkVertexInputAttributeDescription, 2> 
+TriangleApp::Vertex::GetAttributeDescriptions()
+{
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Vertex, m_pos);
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(Vertex, m_color);
+
+    return attributeDescriptions;
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL TriangleApp::DebugCallback(
