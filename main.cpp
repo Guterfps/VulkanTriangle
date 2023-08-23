@@ -49,6 +49,8 @@ private:
     std::vector<VkFence> m_inFlightFences;
     bool m_framebufferResized{false};
     uint32_t m_currentFrame{0};
+    VkBuffer m_vertexBuffer{VK_NULL_HANDLE};
+    VkDeviceMemory m_vertexBufferMemory{VK_NULL_HANDLE};
     
     struct Vertex;
     const std::vector<Vertex> m_vertices{{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
@@ -70,6 +72,7 @@ private:
     void CreateGraphicsPipeline();
     void CreateFramebuffers();
     void CreateCommandPool();
+    void CreateVertexBuffer();
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void MainLoop();
@@ -108,6 +111,7 @@ private:
                                     uint32_t imageIndex);
     static void FramebufferResizeCallback(GLFWwindow *window, 
                                         int width, int height);
+    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
     static constexpr uint32_t WIDTH = 800;
     static constexpr uint32_t HEIGHT = 600;
@@ -215,6 +219,7 @@ void TriangleApp::InitVulkan()
     CreateGraphicsPipeline();
     CreateFramebuffers();
     CreateCommandPool();
+    CreateVertexBuffer();
     CreateCommandBuffers();
     CreateSyncObjects();
 
@@ -767,6 +772,45 @@ void TriangleApp::CreateCommandPool()
     }
 }
 
+void TriangleApp::CreateVertexBuffer()
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = sizeof(m_vertices[0]) * m_vertices.size();
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bufferInfo.flags = 0;
+
+    if (VK_SUCCESS != vkCreateBuffer(m_device, &bufferInfo, 
+                                    nullptr, &m_vertexBuffer))
+    {
+        throw std::runtime_error("failed to create vertex buffer");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(m_device, m_vertexBuffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (VK_SUCCESS != vkAllocateMemory(m_device, &allocInfo, nullptr,
+                                        &m_vertexBufferMemory))
+    {
+        throw std::runtime_error("failed to allocate vertex buffer memory");
+    }
+
+    vkBindBufferMemory(m_device, m_vertexBuffer, m_vertexBufferMemory, 0);
+
+    void *data = nullptr;
+    vkMapMemory(m_device, m_vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+    std::memcpy(data, m_vertices.data(), static_cast<size_t>(bufferInfo.size));
+    vkUnmapMemory(m_device, m_vertexBufferMemory);
+
+}
+
 void TriangleApp::CreateCommandBuffers()
 {
     m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -906,6 +950,9 @@ void TriangleApp::Cleanup()
     vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     
     CleanupSwapChain();
+
+    vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
+    vkFreeMemory(m_device, m_vertexBufferMemory, nullptr);
 
     vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
@@ -1230,7 +1277,11 @@ void TriangleApp::RecordCommandBuffer(VkCommandBuffer commandBuffer,
     scissor.extent = m_swapChainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    VkBuffer vertexBuffers[] = {m_vertexBuffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+    vkCmdDraw(commandBuffer, static_cast<uint32_t>(m_vertices.size()), 1, 0, 0);
     vkCmdEndRenderPass(commandBuffer);
 
     if (VK_SUCCESS != vkEndCommandBuffer(commandBuffer))
@@ -1246,6 +1297,24 @@ void TriangleApp::FramebufferResizeCallback(GLFWwindow* window,
     app->m_framebufferResized = true;
     (void)width;
     (void)height;
+}
+
+uint32_t TriangleApp::FindMemoryType(uint32_t typeFilter, 
+                                    VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memProperties);
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
+    {
+        if ((typeFilter & (1 << i) && 
+            (properties == (memProperties.memoryTypes[i].propertyFlags & properties))))
+        {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type");
 }
 
 inline VkVertexInputBindingDescription TriangleApp::Vertex::GetBindingDescription()
