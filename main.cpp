@@ -58,10 +58,11 @@ private:
     VkDeviceMemory m_vertexBufferMemory{VK_NULL_HANDLE};
     VkBuffer m_indexBuffer{VK_NULL_HANDLE};
     VkDeviceMemory m_indexBufferMemory{VK_NULL_HANDLE};
-
     std::vector<VkBuffer> m_uniformBuffers;
     std::vector<VkDeviceMemory> m_uniformBuffersMemory;
     std::vector<void*> m_uniformBuffersMapped;
+    VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+    std::vector<VkDescriptorSet> m_descriptorSets;
     
     struct Vertex;
     const std::vector<Vertex> m_vertices{{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
@@ -89,6 +90,8 @@ private:
     void CreateVertexBuffer();
     void CreateIndexBuffer();
     void CreateUniformBuffers();
+    void CreateDescriptorPool();
+    void CreateDescriptorSets();
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void MainLoop();
@@ -177,9 +180,9 @@ private:
 
     struct UniformBufferObject
     {
-        glm::mat4 m_model;
-        glm::mat4 m_view;
-        glm::mat4 m_proj;
+        alignas(16) glm::mat4 m_model;
+        alignas(16) glm::mat4 m_view;
+        alignas(16) glm::mat4 m_proj;
     };
 };
 
@@ -251,6 +254,8 @@ void TriangleApp::InitVulkan()
     CreateVertexBuffer();
     CreateIndexBuffer();
     CreateUniformBuffers();
+    CreateDescriptorPool();
+    CreateDescriptorSets();
     CreateCommandBuffers();
     CreateSyncObjects();
 
@@ -704,7 +709,7 @@ void TriangleApp::CreateGraphicsPipeline()
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
     rasterizer.depthBiasConstantFactor = 0.0f;
     rasterizer.depthBiasClamp = 0.0f;
@@ -892,6 +897,64 @@ void TriangleApp::CreateUniformBuffers()
     }
 }
 
+void TriangleApp::CreateDescriptorPool()
+{
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+
+    if (VK_SUCCESS != vkCreateDescriptorPool(m_device, &poolInfo, nullptr, 
+                                            &m_descriptorPool))
+    {
+        throw std::runtime_error("failed to create descriptor pool");
+    }
+}
+
+void TriangleApp::CreateDescriptorSets()
+{
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, 
+                                                m_descriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts = layouts.data();
+
+    m_descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (VK_SUCCESS != vkAllocateDescriptorSets(m_device, &allocInfo, 
+                                                m_descriptorSets.data()))
+    {
+        throw std::runtime_error("failed to allocate descriptor sets");
+    }
+
+    for (std::size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = m_uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(UniformBufferObject);
+
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = m_descriptorSets[i];
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+        descriptorWrite.pImageInfo = nullptr;
+        descriptorWrite.pTexelBufferView = nullptr;
+
+        vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
+    }
+}
+
 void TriangleApp::CreateCommandBuffers()
 {
     m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -1040,6 +1103,7 @@ void TriangleApp::Cleanup()
         vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
     }
 
+    vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
 
     vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
@@ -1162,6 +1226,10 @@ int TriangleApp::RateDevice(VkPhysicalDevice device)
     vkGetPhysicalDeviceProperties(device, &deviceProperties);
     VkPhysicalDeviceFeatures deviceFeatures;
     vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+    std::cout << "Device Name: " << deviceProperties.deviceName << std::endl;
+    std::cout << "Device Type: " << deviceProperties.deviceType << std::endl;
+    
     int score = 0;
 
     if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
@@ -1377,6 +1445,9 @@ void TriangleApp::RecordCommandBuffer(VkCommandBuffer commandBuffer,
 
     vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+    m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+
     vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(m_indices.size()),
                     1, 0, 0, 0);
     vkCmdEndRenderPass(commandBuffer);
@@ -1492,7 +1563,7 @@ void TriangleApp::UpdateUniformBuffer(uint32_t currentImage)
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>
                 (currentTime - startTime).count();
-    
+
     UniformBufferObject ubo{};
     ubo.m_model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), 
                                 glm::vec3(0.0f, 0.0f, 1.0f));
