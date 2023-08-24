@@ -8,6 +8,9 @@
 #include <glm/glm.hpp> // linear algebra
 #include <glm/gtc/matrix_transform.hpp> // matrix transformations
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h> // image loading
+
 #include <iostream> // for errors
 #include <stdexcept> // std::exception
 #include <cstdlib> // EXIT_FAILURE, EXIT_SUCCESS
