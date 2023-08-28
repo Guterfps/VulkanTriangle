@@ -1490,7 +1490,7 @@ int TriangleApp::RateDevice(VkPhysicalDevice device)
 
     if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
     {
-        score += 1000;
+        score += 100000;
     }
 
     score += deviceProperties.limits.maxImageDimension2D;
@@ -1507,6 +1507,8 @@ int TriangleApp::RateDevice(VkPhysicalDevice device)
     {
         score += 100;
     }
+
+    std::cout << "Score: " << score << std::endl;
 
     return score;
 }
