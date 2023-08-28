@@ -1,7 +1,7 @@
 CFLAGS = -std=c++17 -pedantic-errors -Wall -Wextra
 LDFLAGS = -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi
 
-STB_INCLUDE_PATH = ../
+STB_INCLUDE_PATH = ../libraries
 
 .PHONY: clean debug release test
 

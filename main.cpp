@@ -8,9 +8,14 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp> // linear algebra
 #include <glm/gtc/matrix_transform.hpp> // matrix transformations
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp> // hash
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h> // image loading
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h> // obj loader
 
 #include <iostream> // for errors
 #include <stdexcept> // std::exception
@@ -26,11 +31,29 @@
 #include <fstream> // std::ifstream
 #include <array> // std::array
 #include <chrono> // std::chrono
+#include <unordered_map> // std::unordered_map
 
 class TriangleApp
 {
 public:
     void Run();
+
+    struct Vertex
+    {
+        glm::vec3 m_pos;
+        glm::vec3 m_color;
+        glm::vec2 m_texCoord;
+
+        bool operator==(const Vertex& other) const
+        {
+            return ((m_pos == other.m_pos) && (m_color == other.m_color) &&
+                    (m_texCoord == other.m_texCoord));
+        }
+
+        static VkVertexInputBindingDescription GetBindingDescription();
+        static std::array<VkVertexInputAttributeDescription, 3> 
+                GetAttributeDescriptions();
+    };
 
 private:
     GLFWwindow *m_window{nullptr};
@@ -58,6 +81,9 @@ private:
     std::vector<VkFence> m_inFlightFences;
     bool m_framebufferResized{false};
     uint32_t m_currentFrame{0};
+    
+    std::vector<Vertex> m_vertices;
+    std::vector<uint32_t> m_indices;
     VkBuffer m_vertexBuffer{VK_NULL_HANDLE};
     VkDeviceMemory m_vertexBufferMemory{VK_NULL_HANDLE};
     VkBuffer m_indexBuffer{VK_NULL_HANDLE};
@@ -75,22 +101,6 @@ private:
     VkDeviceMemory m_depthImageMemory{VK_NULL_HANDLE};
     VkImageView m_depthImageView{VK_NULL_HANDLE};
     
-    struct Vertex;
-    const std::vector<Vertex> m_vertices
-    {{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-    };
-
-    const std::vector<uint16_t> m_indices = 
-    {0, 1, 2, 2, 3, 0,
-     4, 5, 6, 6, 7, 4};
 
     void InitWindow();
     void InitVulkan();
@@ -112,6 +122,7 @@ private:
     void CreateTextureImage();
     void CreateTextureImageView();
     void CreateTextureSampler();
+    void LoadModel();
     void CreateVertexBuffer();
     void CreateIndexBuffer();
     void CreateUniformBuffers();
@@ -183,6 +194,8 @@ private:
     static const std::vector<const char*> s_validationLayers;
     static const std::vector<const char*> s_deviceExtensions;
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+    static constexpr std::string_view MODEL_PATH = "models/viking_room.obj";
+    static constexpr std::string_view TEXTURE_PATH = "textures/viking_room.png";
 
     #ifdef NDEBUG
         static constexpr bool s_enableValidationLayers = false;
@@ -209,16 +222,6 @@ private:
         std::vector<VkPresentModeKHR> m_presentModes;
     };
 
-    struct Vertex
-    {
-        glm::vec3 m_pos;
-        glm::vec3 m_color;
-        glm::vec2 m_texCoord;
-
-        static VkVertexInputBindingDescription GetBindingDescription();
-        static std::array<VkVertexInputAttributeDescription, 3> 
-                GetAttributeDescriptions();
-    };
 
     struct UniformBufferObject
     {
@@ -227,6 +230,19 @@ private:
         alignas(16) glm::mat4 m_proj;
     };
 };
+
+namespace std
+{
+template<> struct hash<TriangleApp::Vertex>
+{
+    size_t operator()(const TriangleApp::Vertex& vertex) const
+    {
+        return ((hash<glm::vec3>()(vertex.m_pos) ^ 
+                (hash<glm::vec3>()(vertex.m_color) << 1)) >> 1) ^
+                (hash<glm::vec2>()(vertex.m_texCoord) << 1);
+    }
+};
+}
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, 
         const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
@@ -297,6 +313,7 @@ void TriangleApp::InitVulkan()
     CreateTextureImage();
     CreateTextureImageView();
     CreateTextureSampler();
+    LoadModel();
     CreateVertexBuffer();
     CreateIndexBuffer();
     CreateUniformBuffers();
@@ -925,7 +942,7 @@ void TriangleApp::CreateDepthResources()
 void TriangleApp::CreateTextureImage()
 {
     int texWidth = 0, texHeight = 0, texChannels = 0;
-    stbi_uc *pixels = stbi_load("textures/texture.png", &texWidth, &texHeight,
+    stbi_uc *pixels = stbi_load(TEXTURE_PATH.data(), &texWidth, &texHeight,
                             &texChannels, STBI_rgb_alpha);
     if (nullptr == pixels)
     {
@@ -998,6 +1015,45 @@ void TriangleApp::CreateTextureSampler()
     {
         throw std::runtime_error("failed to create texture sampler");
     }
+}
+
+void TriangleApp::LoadModel()
+{
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    if (false == tinyobj::LoadObj(&attrib, &shapes, &materials, 
+                        &warn, &err, MODEL_PATH.data()))
+    {
+        throw std::runtime_error(warn + err);
+    }
+
+    std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
+    for (const auto& shape : shapes)
+    {
+        for (const auto& indx : shape.mesh.indices)
+        {
+            Vertex vertex{};
+            vertex.m_pos = {attrib.vertices[3 * indx.vertex_index + 0],
+                            attrib.vertices[3 * indx.vertex_index + 1],
+                            attrib.vertices[3 * indx.vertex_index + 2]};
+            vertex.m_texCoord = {attrib.texcoords[2 * indx.texcoord_index + 0],
+                        1.0f - attrib.texcoords[2 * indx.texcoord_index + 1]};
+            vertex.m_color = {1.0f, 1.0f, 1.0f};
+
+            if (0 == uniqueVertices.count(vertex))
+            {
+                uniqueVertices[vertex] = static_cast<uint32_t>(m_vertices.size());
+                m_vertices.push_back(vertex);
+            }
+
+            m_indices.push_back(uniqueVertices[vertex]);
+        }
+    }
+    std::cout << "vertices: " << m_vertices.size() << std::endl;
 }
 
 void TriangleApp::CreateVertexBuffer()
@@ -1438,6 +1494,7 @@ int TriangleApp::RateDevice(VkPhysicalDevice device)
     }
 
     score += deviceProperties.limits.maxImageDimension2D;
+    score += deviceProperties.limits.maxImageDimension3D;
 
     if ((deviceFeatures.geometryShader == VK_FALSE) || 
         (false == IsDeviceSuitable(device)))
@@ -1646,7 +1703,7 @@ void TriangleApp::RecordCommandBuffer(VkCommandBuffer commandBuffer,
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-    vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(commandBuffer, m_indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
     m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
