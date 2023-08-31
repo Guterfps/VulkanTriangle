@@ -195,6 +195,8 @@ private:
                          int32_t texWidth, int32_t texHeight,
                          uint32_t mipLevels);
 
+    void ShowFPS();
+
     static constexpr uint32_t WIDTH = 800;
     static constexpr uint32_t HEIGHT = 600;
     static const std::vector<const char*> s_validationLayers;
@@ -466,6 +468,9 @@ void TriangleApp::PickPhysicalDevice()
     if (deviceMap.rbegin()->first > 0)
     {
         m_physicalDevice = deviceMap.rbegin()->second;
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
+        std::cout << "Selected device: " << properties.deviceName << std::endl;
     }
     else
     {
@@ -1266,6 +1271,7 @@ void TriangleApp::MainLoop()
     while (!glfwWindowShouldClose(m_window))
     {
         glfwPollEvents();
+        ShowFPS();
         DrawFrame();
     }
 
@@ -2131,6 +2137,27 @@ void TriangleApp::GenerateMipmaps(VkImage image, VkFormat imageFormat,
     EndSingleTimeCommands(commandBuffer);
 }
 
+void TriangleApp::ShowFPS()
+{
+    static double lastTime = glfwGetTime();
+    static size_t frameCount = 0;
+
+    double currentTime = glfwGetTime();
+    double deltaTime = currentTime - lastTime;
+
+    ++frameCount;
+
+    if (deltaTime >= 1.0)
+    {
+        double fps = double(frameCount) / deltaTime;
+        std::stringstream ss;
+        ss << "Vulkan | FPS: " << fps;
+
+        glfwSetWindowTitle(m_window, ss.str().c_str());
+        frameCount = 0;
+        lastTime = currentTime;
+    }
+}
 
 inline VkVertexInputBindingDescription TriangleApp::Vertex::GetBindingDescription()
 {
